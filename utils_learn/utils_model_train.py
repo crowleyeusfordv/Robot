@@ -43,7 +43,7 @@ def compute_fk_loss(y_pred, y_true, w_pos=0.9, w_ori=0.1):
     R_true = y_true[:, 3:]  # [B, 9]
     loss_ori = F.mse_loss(R_pred, R_true)
     # 3. 加权
-    # loss = w_pos * loss_pos + w_ori * loss_ori
+    loss = w_pos * loss_pos + w_ori * loss_ori
     # 4. 监控
     with torch.no_grad():
         mae = torch.mean(torch.abs(y_pred - y_true)).item()
@@ -51,7 +51,7 @@ def compute_fk_loss(y_pred, y_true, w_pos=0.9, w_ori=0.1):
         pos_error = torch.norm(y_pred[:, :3] - y_true[:, :3], dim=1).mean().item()
         ori_error = torch.norm(R_pred - R_true, dim=1).mean().item()
 
-    loss = F.mse_loss(y_pred, y_true)
+    # loss = F.mse_loss(y_pred, y_true)
     return loss, {'mae': mae, 'rmse': rmse, 'position_error': pos_error, 'orientation_error': ori_error}
 
 
@@ -94,9 +94,9 @@ def compute_ik_loss(q_pred, q_true,
     # 3.2 旋转矩阵损失（Frobenius）
     loss_ori = F.mse_loss(pred_mat[:, 3:], pose_true[:, 3:])
     # # 3.3 加权总损失
-    # loss = w_pos * loss_pos + w_ori * loss_ori
+    loss = w_pos * loss_pos + w_ori * loss_ori
 
-    loss = F.mse_loss(pred_mat, pose_true)
+    # loss = F.mse_loss(pred_mat, pose_true)
 
     # ---- 4. 监控指标 ----
     with torch.no_grad():
@@ -127,6 +127,7 @@ def plot_training_curves(history: dict, save_path: str):
 
 
 # ---------- 唯一入口 ----------
+# 需要调试的地方
 def train_dofbot_model(data_path,
                        model_type='mlp',  # 'mlp' | 'mdn' | 'lstm'
                        mode='fk',  # 'fk'  | 'ik'

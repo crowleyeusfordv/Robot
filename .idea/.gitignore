@@ -6,3 +6,15 @@
 # Datasource local storage ignored files
 /dataSources/
 /dataSources.local.xml
+# 明确忽略超大的数据集文件，它们导致了 push 失败 (725MB & 539MB)
+dataset/20251105_155358/dofbot_fk_1200000_norm.csv
+dataset/20251105_155358/dofbot_fk_1200000_raw.csv
+
+# 忽略所有编译或运行时产生的缓存文件 (.pyc)
+# 您 git status 中提到了 __pycache__ 和 utils_learn/__pycache__
+__pycache__/
+*/__pycache__/
+
+# 忽略结果目录
+# 您 git status 中提到了 results/ 下的各种文件和目录
+results/
