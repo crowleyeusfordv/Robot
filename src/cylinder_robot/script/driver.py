@@ -1,131 +1,122 @@
-#!/usr/bin/env python
- 
-# from this import d
+#!/usr/bin/env python3
+
+import math
+
 import rospy
-import random
-import numpy as np
-from gazebo_msgs.msg import ModelState
-# from gazebo_msgs.msg import ModelStates
-from geometry_msgs.msg import Twist
-from scipy import linalg as lnr
- 
-class Driver(object):
-    # constructor
+from gazebo_msgs.msg import ModelState, ModelStates
+from geometry_msgs.msg import Pose, Quaternion, Twist
+
+
+class VehicleState(object):
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.vx = 0.0
+        self.vy = 0.0
+        self.ax = 0.0
+        self.ay = 0.0
+
+
+class TwoObjectDriver(object):
     def __init__(self):
-        self.time_save = 0
-        self.name = 'cylinderRobot'
-        self.pub = rospy.Publisher("/gazebo/set_model_state", ModelState, queue_size=10)
-        rospy.Subscriber('/robot/control', Twist, self.callback_control)
-        self.mass = 10
-        ## ===================================== Edit bellow =====================================
-        ## ==========================================================================   vvvvvvvvvv
+        self.rate_hz = rospy.get_param('~rate_hz', 60.0)
+        self.mass = rospy.get_param('~mass', 1.0)
+        self.damping = rospy.get_param('~damping', 0.32)
+        self.max_speed = rospy.get_param('~max_speed', 2.2)
+        self.z_height = rospy.get_param('~z_height', 0.12)
 
-        # Define publisher object.  Publish the state of robot to topic "/gazebo/set_model_state"
-        #   message type is ModelState
-        self.pub = rospy.Publisher("/gazebo/set_model_state", ModelState, queue_size=10)
-        # Define subscriber object. Subscrip the signal from  topic  "/robot/control" sent by teleop
-        #   message type is Twist
-        #   set the callback function as self.callback_control
-        rospy.Subscriber("/robot/control", Twist, self.callback_control)
+        self.states = {
+            'pursuer_object': VehicleState(0.0, 1.65),
+            'evader_object': VehicleState(0.69, 2.82),
+        }
 
-        # member variable saving system state.
-        self.state = np.zeros([4,1])    
-        # state = [ vx; px; vy; py ]
-        #   dx/dt = Ax(t) + Bu(t) + w(t), 
-        #   cov[w(t), w(t)] = Sigma_w
+        self.set_model_pub = rospy.Publisher('/gazebo/set_model_state', ModelState, queue_size=20)
+        self.state_pub = rospy.Publisher('/pursuit_evasion/model_states', ModelStates, queue_size=10)
 
-        # Define matrix of continuous system:  A, B (by numpy).
-        self.A = np.array([
-            [0, 0, 0, 0],
-            [1, 0, 0, 0],
-            [0, 0, 0, 0],
-            [0, 0, 1, 0]
-        ])
-        self.B = np.array([
-            [1/self.mass, 0],
-            [0,           0],
-            [0, 1/self.mass],
-            [0,           0]
-        ])
+        rospy.Subscriber('/pursuer/control', Twist, self.pursuer_callback)
+        rospy.Subscriber('/evader/control', Twist, self.evader_callback)
 
-        ## ==========================================================================  ^^^^^^^^^^
-        ## ===================================== Edit above =====================================
-        self.Sigma_w = np.eye(4)*0.00001
- 
-    def callback_control(self, twist):
-        if self.time_save == 0:
-            self.time_save = rospy.get_time()
-        else:
-            dt = rospy.get_time() - self.time_save
-            self.time_save = rospy.get_time()
-            u = np.zeros([2,1])
-            u[0] = twist.linear.x
-            u[1] = twist.angular.z
-            if u[0] ==0 and self.state[1,0]==0 and self.state[3,0]==0:
-                return 0
-            else:
-                self.state = self.forward_dynamics(u, dt)
-                self.sendStateMsg()
+        self.last_time = rospy.get_time()
+        self.timer = rospy.Timer(rospy.Duration(1.0 / self.rate_hz), self.step)
 
-    def forward_dynamics(self, u, dt):
+    def pursuer_callback(self, msg):
+        self.set_control('pursuer_object', msg)
 
-        Atilde, Btilde, Sigma_w_tilde = self._discretization_Func(dt)
+    def evader_callback(self, msg):
+        self.set_control('evader_object', msg)
 
-        w = np.random.multivariate_normal(np.zeros([4]), Sigma_w_tilde).reshape([4, 1])
+    def set_control(self, name, msg):
+        state = self.states[name]
+        state.ax = msg.linear.x / self.mass
+        state.ay = msg.angular.z / self.mass
 
-        x = Atilde.dot(self.state) + Btilde.dot(u) + w
+    def step(self, _event):
+        now = rospy.get_time()
+        dt = max(0.0, min(now - self.last_time, 0.08))
+        self.last_time = now
 
-        return x
+        for name, state in self.states.items():
+            self.integrate(state, dt)
+            self.publish_model_state(name, state)
+        self.publish_combined_state()
 
-    def _discretization_Func(self, dt):
-        ## ===================================== Edit bellow =====================================
-        ## ==========================================================================   vvvvvvvvvv
+    def integrate(self, state, dt):
+        if dt <= 0.0:
+            return
+        state.vx += (state.ax - self.damping * state.vx) * dt
+        state.vy += (state.ay - self.damping * state.vy) * dt
 
+        speed = math.hypot(state.vx, state.vy)
+        if speed > self.max_speed:
+            scale = self.max_speed / speed
+            state.vx *= scale
+            state.vy *= scale
 
-        # Please implementation the discretization function here
-        Atilde = np.array([
-            [1,  0, 0,  0],
-            [dt, 1, 0,  0],
-            [0,  0, 1,  0],
-            [0,  0, dt, 1]
-        ])
-        Btilde = np.array([
-            [dt/self.mass,      0],
-            [dt*dt/2/self.mass, 0],
-            [0,      dt/self.mass],
-            [0, dt*dt/2/self.mass]
-        ])
-        
-        q1 = self.Sigma_w[0,0]
-        q2 = self.Sigma_w[1,1]
-        q3 = self.Sigma_w[2,2]
-        q4 = self.Sigma_w[3,3]
-        Sigma_w_tilde = np.array([
-            [dt*q1,         dt*dt/2*q1,                 0,          0],
-            [dt*dt/2*q1,    (dt*q2)+(dt*dt*dt/3*q1),    0,          0],
-            [0,             0,                          dt*q3,      dt*dt/2*q3],
-            [0,             0,                          dt*dt/2*q3, (dt*q4)+(dt*dt*dt/3*q3)],
-        ])
+        state.x += state.vx * dt
+        state.y += state.vy * dt
 
-
-        ## ==========================================================================  ^^^^^^^^^^
-        ## ===================================== Edit above =====================================
-        return Atilde, Btilde, Sigma_w_tilde
-
-    def sendStateMsg(self):
+    def publish_model_state(self, name, state):
         msg = ModelState()
-        msg.model_name = self.name
-        msg.pose.position.x = self.state[1]
-        msg.pose.position.y = self.state[3]
-        self.pub.publish(msg)
- 
-       
-       
- 
+        msg.model_name = name
+        msg.reference_frame = 'world'
+        msg.pose = self.pose_from_state(state)
+        msg.twist.linear.x = state.vx
+        msg.twist.linear.y = state.vy
+        self.set_model_pub.publish(msg)
+
+    def publish_combined_state(self):
+        msg = ModelStates()
+        for name in ('pursuer_object', 'evader_object'):
+            state = self.states[name]
+            msg.name.append(name)
+            msg.pose.append(self.pose_from_state(state))
+            twist = Twist()
+            twist.linear.x = state.vx
+            twist.linear.y = state.vy
+            msg.twist.append(twist)
+        self.state_pub.publish(msg)
+
+    def pose_from_state(self, state):
+        pose = Pose()
+        pose.position.x = state.x
+        pose.position.y = state.y
+        pose.position.z = self.z_height
+        yaw = math.atan2(state.vy, state.vx) if math.hypot(state.vx, state.vy) > 0.02 else 0.0
+        pose.orientation = self.quaternion_from_yaw(yaw)
+        return pose
+
+    @staticmethod
+    def quaternion_from_yaw(yaw):
+        quat = Quaternion()
+        quat.z = math.sin(yaw / 2.0)
+        quat.w = math.cos(yaw / 2.0)
+        return quat
+
+
 if __name__ == '__main__':
     try:
         rospy.init_node('driver', anonymous=True)
-        driver = Driver()
+        TwoObjectDriver()
         rospy.spin()
     except rospy.ROSInterruptException:
         pass

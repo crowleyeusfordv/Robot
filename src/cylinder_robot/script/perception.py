@@ -1,238 +1,104 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-import rospy
-import rospkg
-from scipy import linalg as lnr
+import math
+
+import matplotlib
+matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-import numpy as np
-from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Twist
-from gazebo_msgs.msg import ModelState
-import os
-import sys
+import rospkg
+import rospy
+from gazebo_msgs.msg import ModelStates
 
-# import the Kalman filter we finished last week
-# from KalmanFilter import KalmanFilter
 
-class KalmanFilter(object):
-    # initialization the kalman filter. 
-    #   x'(t) = Ax(t) + Bu(t) + w(t)
-    #   y(t) = Cx(t) + v(t)
-    #   x(0) ~ N(x_0, P_0)
-    def __init__(self, mass, C, Sigma_w, Sigma_v, x_0, P_0):
-        self.mass = mass
-        self.C = C
-    
-        self.n = 4
-        self.m = 2
-
-        self.Sigma_w = Sigma_w
-        self.Sigma_v = Sigma_v
-        
-        self.t = 0
-        self.x = x_0
-        self.P = P_0
-        self.u = np.zeros([self.m, 1])
-
-    # Given duration dt, return the discretization of A, B, Sigma_w. Just like what we do last week.
-    def _discretization_Func(self, dt):
-        Atilde = np.array([
-            [1, 0,  0,  0],
-            [dt,1,  0,  0],
-            [0, 0,  1,  0],
-            [0, 0,  dt, 1]
-        ])
-        Btilde = np.array([
-            [dt/self.mass,      0],
-            [dt*dt/2/self.mass, 0],
-            [0,      dt/self.mass],
-            [0, dt*dt/2/self.mass]
-        ])
-        q1 = self.Sigma_w[0,0]
-        q2 = self.Sigma_w[1,1]
-        q3 = self.Sigma_w[2,2]
-        q4 = self.Sigma_w[3,3]
-        Sigma_w_tilde = np.array([
-            [dt*q1,         dt*dt/2*q1,                 0,          0],
-            [dt*dt/2*q1,    (dt*q2)+(dt*dt*dt/3*q1),    0,          0],
-            [0,             0,                          dt*q3,      dt*dt/2*q3],
-            [0,             0,                          dt*dt/2*q3, (dt*q4)+(dt*dt*dt/3*q3)],
-        ])
-
-        return Atilde, Btilde, Sigma_w_tilde
-
-    ################################################################################################
-    ## ================================ Edit below here ================================ vvvvvvvvvvv
-    # predict step
-    def _predict_Step(self, ctrl_time):
-        dt = ctrl_time - self.t
-        self.t = ctrl_time
-        if dt < 0:
-            dt = 0.0
-        Atilde, Btilde, Sigma_w_tilde = self._discretization_Func(dt)
-        self.x = Atilde.dot(self.x) + Btilde.dot(self.u)
-        self.P = Atilde.dot(self.P).dot(Atilde.T) + Sigma_w_tilde
-        self.t = ctrl_time
-
-    # correction step
-    def _correction_Step(self, y):
-        innovation = y - self.C.dot(self.x)
-        S = self.C.dot(self.P).dot(self.C.T) + self.Sigma_v
-        K = self.P.dot(self.C.T).dot(lnr.inv(S))
-        self.x = self.x + K.dot(innovation)
-        I = np.eye(self.n)
-        self.P = (I - K.dot(self.C)).dot(self.P)
-
-    # when getting the control signal, execution the predict step, update the control signal
-    def control_moment(self, u_new, time_now):
-        if self.t == 0:
-            self.t = time_now
-            return
-        self._predict_Step(time_now)
-        self.u = u_new
-
-    # when getting the observe info, execution the predict step, and then execution the correction step
-    def observe_moment(self, y_new, time_now):
-        if self.t == 0:
-            self.t = time_now
-            return
-        self._predict_Step(time_now)
-        self._correction_Step(y_new)
-
-    ## ==========================================================================  ^^^^^^^^^^
-    ## ===================================== Edit above =====================================
-class Localization(object):
+class TrajectoryRecorder(object):
     def __init__(self):
-        # config the subscribe information
-        rospy.Subscriber('/robot/control', Twist, self.callback_control)
-        rospy.Subscriber('/robot/observe', LaserScan, self.callback_observe)
-        rospy.Subscriber('gazebo/set_model_state', ModelState, self.callback_state)
-        self.pub = rospy.Publisher("/robot/esti_model_state", ModelState, queue_size=10)
-        # catch Ctrl+C. When you press Ctrl+C, call self.visualzation()
+        self.start_time = rospy.get_time()
+        self.samples = {
+            'time': [],
+            'pursuer_x': [],
+            'pursuer_y': [],
+            'evader_x': [],
+            'evader_y': [],
+            'distance': [],
+        }
+        rospy.Subscriber('/pursuit_evasion/model_states', ModelStates, self.state_callback)
         rospy.on_shutdown(self.visualization)
 
-        # initialize Kalman filter. 
-        self.kf = KalmanFilter(
-            mass = 10, 
-            C = np.array([
-                [0, 1, 0, 0],
-                [0, 0, 0, 1]
-            ]),
-            Sigma_w = np.eye(4)*0.00001,
-            Sigma_v = np.array([[0.02**2, 0],[0, 0.02**2]]),
-            x_0 = np.zeros([4,1]),
-            P_0 = np.eye(4)/1000
+    def state_callback(self, msg):
+        try:
+            pursuer_index = msg.name.index('pursuer_object')
+            evader_index = msg.name.index('evader_object')
+        except ValueError:
+            return
+
+        pursuer = msg.pose[pursuer_index].position
+        evader = msg.pose[evader_index].position
+        elapsed = rospy.get_time() - self.start_time
+        distance = math.hypot(evader.x - pursuer.x, evader.y - pursuer.y)
+
+        self.samples['time'].append(elapsed)
+        self.samples['pursuer_x'].append(pursuer.x)
+        self.samples['pursuer_y'].append(pursuer.y)
+        self.samples['evader_x'].append(evader.x)
+        self.samples['evader_y'].append(evader.y)
+        self.samples['distance'].append(distance)
+
+    @staticmethod
+    def heart_points(count=400):
+        xs = []
+        ys = []
+        for i in range(count + 1):
+            theta = 2.0 * math.pi * float(i) / float(count)
+            x = 16.0 * math.sin(theta) ** 3
+            y = (
+                13.0 * math.cos(theta)
+                - 5.0 * math.cos(2.0 * theta)
+                - 2.0 * math.cos(3.0 * theta)
+                - math.cos(4.0 * theta)
             )
+            xs.append(0.22 * x)
+            ys.append(0.22 * y + 0.55)
+        return xs, ys
 
-        # list to save data for visualization
-        self.x_esti_save = []
-        self.x_esti_time = []
-        self.x_true_save = []
-        self.x_true_time = []
-        self.p_obsv_save = []
-        self.p_obsv_time = []
-
-    ################################################################################################
-    ## ================================ Edit below here ================================ vvvvvvvvvvv
-    def callback_control(self, twist):
-        # extract control signal from message
-        current_time = rospy.get_time()
-        u = np.zeros([2, 1])
-        u[0, 0] = twist.linear.x
-        u[1, 0] = twist.angular.z
-        
-        # call control moment function in Kalman filter
-        self.kf.control_moment(u, current_time)
-
-        # save data for visualization
-        self.x_esti_save.append(self.kf.x)
-        self.x_esti_time.append(current_time)
-
-    def callback_observe(self, laserscan):
-        # extract observe signal from message
-        current_time = rospy.get_time()
-        y = np.zeros([2, 1])
-        y[0, 0] = laserscan.ranges[0]
-        y[1, 0] = laserscan.ranges[1]
-
-        # call observe moment function in Kalman filter
-        self.kf.observe_moment(y, current_time)
-
-        # save data for visualzation
-        self.x_esti_save.append(self.kf.x)
-        self.x_esti_time.append(current_time)
-        self.p_obsv_save.append(y)
-        self.p_obsv_time.append(current_time)
-
-        # send estimated x to controller
-        self.sendStateMsg()
-    ## ==========================================================================  ^^^^^^^^^^
-    ## ===================================== Edit above =====================================
-
-    # restore the true state of robot for visualization. You CAN NOT get them in real world.
-    def callback_state(self, state):
-        current_time = rospy.get_time()
-        x = np.zeros([4,1])
-        x[0,0] = state.twist.linear.x
-        x[1,0] = state.pose.position.x
-        x[2,0] = state.twist.linear.y
-        x[3,0] = state.pose.position.y
-        self.x_true_save.append(x)
-        self.x_true_time.append(current_time)
-
-    def sendStateMsg(self):
-        msg = ModelState()
-        msg.pose.position.x = self.kf.x[1]
-        msg.pose.position.y = self.kf.x[3]
-        self.pub.publish(msg)
-
-    # visualzation
     def visualization(self):
-        print("Visualizing......")
-        t_esti = np.array(self.x_esti_time)
-        x_esti = np.concatenate(self.x_esti_save, axis=1)
-        
-        p_obsv = np.concatenate(self.p_obsv_save, axis=1)
-        t_obsv = np.array(self.p_obsv_time)
+        if len(self.samples['time']) < 2:
+            rospy.logwarn('Not enough trajectory samples to save fig_x.png')
+            return
 
-        t_true = np.array(self.x_true_time)
-        x_true = np.concatenate(self.x_true_save, axis=1)
+        ref_x, ref_y = self.heart_points()
+        fig = plt.figure(figsize=(16, 9))
+        ax_path = fig.add_subplot(1, 2, 1)
+        ax_dist = fig.add_subplot(1, 2, 2)
 
-        fig_x = plt.figure(figsize=(16,9))
-        ax = fig_x.subplots(2,2)
+        ax_path.plot(ref_x, ref_y, 'k--', linewidth=1.2, label='heart reference')
+        ax_path.plot(self.samples['pursuer_x'], self.samples['pursuer_y'], label='pursuer')
+        ax_path.plot(self.samples['evader_x'], self.samples['evader_y'], label='evader')
+        ax_path.scatter(self.samples['pursuer_x'][0], self.samples['pursuer_y'][0], s=35, label='pursuer start')
+        ax_path.scatter(self.samples['evader_x'][0], self.samples['evader_y'][0], s=35, label='evader start')
+        ax_path.set_title('pursuit-evasion heart trajectory')
+        ax_path.set_xlabel('x')
+        ax_path.set_ylabel('y')
+        ax_path.set_aspect('equal', adjustable='box')
+        ax_path.grid(True)
+        ax_path.legend(loc='best')
 
-        ax[0,0].plot(t_esti, x_esti[1,:].T, label = "esti")
-        ax[0,0].plot(t_true, x_true[1,:].T, label = "true")
-        ax[0,0].legend(bbox_to_anchor = (0.85,1), loc='upper left')
-        ax[0,0].set_title('px')
+        ax_dist.plot(self.samples['time'], self.samples['distance'])
+        ax_dist.set_title('separation over time')
+        ax_dist.set_xlabel('time [s]')
+        ax_dist.set_ylabel('distance')
+        ax_dist.grid(True)
 
-        ax[1,0].plot(t_esti, x_esti[3,:].T, label = "esti")
-        ax[1,0].plot(t_true, x_true[3,:].T, label = "true")
-        ax[1,0].legend(bbox_to_anchor = (0.85,1), loc='upper left')
-        ax[1,0].set_title('py')
-
-        ax[0,1].plot(x_esti[1,:].T, x_esti[3,:].T, label = "esti")
-        ax[0,1].plot(x_true[1,:].T, x_true[3,:].T, label = "true")
-        ax[0,1].legend(bbox_to_anchor = (0.1,1), loc='upper left')
-        ax[0,1].set_title('trace: esti with truth')
-
-        ax[1,1].plot(x_esti[1,:].T, x_esti[3,:].T, label = 'esti')
-        ax[1,1].plot(p_obsv[0,:].T, p_obsv[1,:].T, label = 'obsv')
-        ax[1,1].legend(bbox_to_anchor = (0.1,1), loc='upper left')
-        ax[1,1].set_title('trace: esti with observation')
-
-
-
-        fig_path = rospkg.RosPack().get_path('cylinder_robot')+"/"
-        fig_x.savefig(fig_path+'fig_x.png', dpi=120)
-        print("Visualization Complete.")
-
+        fig.tight_layout()
+        fig_path = rospkg.RosPack().get_path('cylinder_robot') + '/fig_x.png'
+        fig.savefig(fig_path, dpi=120)
+        plt.close(fig)
+        rospy.loginfo('Saved pursuit-evasion trajectory plot to %s', fig_path)
 
 
 if __name__ == '__main__':
     try:
         rospy.init_node('perception', anonymous=True)
-        obs = Localization()
+        TrajectoryRecorder()
         rospy.spin()
     except rospy.ROSInterruptException:
         pass

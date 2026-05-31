@@ -2,9 +2,10 @@ cmake_minimum_required(VERSION 3.0.2)
 project(cylinder_robot)
 
 find_package(catkin REQUIRED COMPONENTS
+  gazebo_msgs
+  geometry_msgs
   rospy
   std_msgs
-  geometry_msgs
 )
 
 catkin_package()
