@@ -117,7 +117,8 @@ class UmbrellaGameRecorder(object):
 
         pursuer = msg.pose[pursuer_index].position
         evader = msg.pose[evader_index].position
-        self.samples['time'].append(rospy.get_time() - self.start_time)
+        elapsed = rospy.get_time() - self.start_time
+        self.samples['time'].append(elapsed)
         self.samples['pursuer_x'].append(pursuer.x)
         self.samples['pursuer_y'].append(pursuer.y)
         self.samples['evader_x'].append(evader.x)
