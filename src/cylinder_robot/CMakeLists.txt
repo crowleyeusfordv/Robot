@@ -14,9 +14,12 @@ catkin_package()
 catkin_install_python(PROGRAMS
   script/controller.py
   script/controller_complex.py
+  script/controller_umbrella.py
   script/driver.py
   script/driver_complex.py
+  script/driver_umbrella.py
   script/perception.py
   script/perception_complex.py
+  script/perception_umbrella.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

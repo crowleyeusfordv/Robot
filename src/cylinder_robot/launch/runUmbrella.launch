@@ -1,0 +1,14 @@
+<launch>
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(find cylinder_robot)/worlds/umbrella.world"/>
+    <arg name="paused" value="false"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="gui" value="true"/>
+    <arg name="recording" value="false"/>
+    <arg name="debug" value="false"/>
+  </include>
+
+  <node pkg="cylinder_robot" name="driver_umbrella" type="driver_umbrella.py" output="screen" respawn="false"/>
+  <node pkg="cylinder_robot" name="controller_umbrella" type="controller_umbrella.py" output="screen" respawn="false"/>
+  <node pkg="cylinder_robot" name="perception_umbrella" type="perception_umbrella.py" output="screen" respawn="false"/>
+</launch>

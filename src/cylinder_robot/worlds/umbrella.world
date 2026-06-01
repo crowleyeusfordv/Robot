@@ -1,0 +1,214 @@
+<?xml version="1.0" ?>
+<sdf version="1.5">
+  <world name="default">
+    <include>
+      <uri>model://sun</uri>
+    </include>
+
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <model name="pursuer_umbrella">
+      <pose>1.88 0.34 0.12 0 0 0</pose>
+      <link name="body">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.16</radius>
+              <length>0.20</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.16</radius>
+              <length>0.20</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>1.0 0.12 0.04 1</ambient>
+            <diffuse>1.0 0.25 0.06 1</diffuse>
+          </material>
+        </visual>
+        <inertial>
+          <mass>1.0</mass>
+          <inertia>
+            <ixx>0.005</ixx>
+            <iyy>0.005</iyy>
+            <izz>0.005</izz>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyz>0</iyz>
+          </inertia>
+        </inertial>
+      </link>
+    </model>
+
+    <model name="evader_umbrella">
+      <pose>2.68 2.55 0.12 0 0 0</pose>
+      <link name="body">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.16</radius>
+              <length>0.20</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.16</radius>
+              <length>0.20</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.00 0.45 1.0 1</ambient>
+            <diffuse>0.02 0.70 1.0 1</diffuse>
+          </material>
+        </visual>
+        <inertial>
+          <mass>1.0</mass>
+          <inertia>
+            <ixx>0.005</ixx>
+            <iyy>0.005</iyy>
+            <izz>0.005</izz>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyz>0</iyz>
+          </inertia>
+        </inertial>
+      </link>
+    </model>
+
+    <model name="umbrella_center_marker">
+      <pose>0 0 0.035 0 0 0</pose>
+      <static>1</static>
+      <link name="body">
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.18</radius>
+              <length>0.04</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0 0 0 1</ambient>
+            <diffuse>0 0 0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="myroom10">
+      <pose frame="">0 0 0 0 0 0</pose>
+      <link name="Wall_4">
+        <collision name="Wall_4_Collision">
+          <geometry>
+            <box>
+              <size>10.4 0.2 2.5</size>
+            </box>
+          </geometry>
+          <pose frame="">0 0 1.25 0 0 0</pose>
+        </collision>
+        <visual name="Wall_4_Visual">
+          <pose frame="">0 0 1.25 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>10.4 0.2 2.5</size>
+            </box>
+          </geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+            <ambient>1 1 1 1</ambient>
+          </material>
+        </visual>
+        <pose frame="">-5.1 0 0 0 0 1.5708</pose>
+      </link>
+      <link name="Wall_5">
+        <collision name="Wall_5_Collision">
+          <geometry>
+            <box>
+              <size>10.4 0.2 2.5</size>
+            </box>
+          </geometry>
+          <pose frame="">0 0 1.25 0 0 0</pose>
+        </collision>
+        <visual name="Wall_5_Visual">
+          <pose frame="">0 0 1.25 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>10.4 0.2 2.5</size>
+            </box>
+          </geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+            <ambient>1 1 1 1</ambient>
+          </material>
+        </visual>
+        <pose frame="">0 5.1 0 0 0 0</pose>
+      </link>
+      <link name="Wall_6">
+        <collision name="Wall_6_Collision">
+          <geometry>
+            <box>
+              <size>10.4 0.2 2.5</size>
+            </box>
+          </geometry>
+          <pose frame="">0 0 1.25 0 0 0</pose>
+        </collision>
+        <visual name="Wall_6_Visual">
+          <pose frame="">0 0 1.25 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>10.4 0.2 2.5</size>
+            </box>
+          </geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+            <ambient>1 1 1 1</ambient>
+          </material>
+        </visual>
+        <pose frame="">5.1 0 0 0 0 -1.5708</pose>
+      </link>
+      <link name="Wall_7">
+        <collision name="Wall_7_Collision">
+          <geometry>
+            <box>
+              <size>10.4 0.2 2.5</size>
+            </box>
+          </geometry>
+          <pose frame="">0 0 1.25 0 0 0</pose>
+        </collision>
+        <visual name="Wall_7_Visual">
+          <pose frame="">0 0 1.25 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>10.4 0.2 2.5</size>
+            </box>
+          </geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+            <ambient>1 1 1 1</ambient>
+          </material>
+        </visual>
+        <pose frame="">0 -5.1 0 0 0 3.14159</pose>
+      </link>
+      <static>1</static>
+    </model>
+  </world>
+</sdf>
