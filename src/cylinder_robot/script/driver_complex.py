@@ -27,8 +27,8 @@ class ComplexGameDriver(object):
         self.z_height = rospy.get_param('~z_height', 0.12)
 
         self.states = {
-            'pursuer_complex': VehicleState(0.0, 1.65),
-            'evader_complex': VehicleState(1.20, 3.18),
+            'pursuer_complex': VehicleState(0.08, 2.08),
+            'evader_complex': VehicleState(2.47, 2.94),
         }
 
         self.set_model_pub = rospy.Publisher('/gazebo/set_model_state', ModelState, queue_size=20)

@@ -10,7 +10,7 @@
     </include>
 
     <model name="pursuer_complex">
-      <pose>0 1.65 0.12 0 0 0</pose>
+      <pose>0.08 2.08 0.12 0 0 0</pose>
       <link name="body">
         <collision name="collision">
           <geometry>
@@ -47,7 +47,7 @@
     </model>
 
     <model name="evader_complex">
-      <pose>1.20 3.18 0.12 0 0 0</pose>
+      <pose>2.47 2.94 0.12 0 0 0</pose>
       <link name="body">
         <collision name="collision">
           <geometry>

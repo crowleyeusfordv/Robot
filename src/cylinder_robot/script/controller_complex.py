@@ -23,6 +23,7 @@ class ComplexGameController(object):
         rospy.Subscriber('/complex/model_states', ModelStates, self.state_callback)
 
         self.rate_hz = rospy.get_param('~rate_hz', 30.0)
+        self.start_theta = rospy.get_param('~start_theta', 0.32)
         self.period = rospy.get_param('~period', 28.0)
         self.phase_gap = rospy.get_param('~phase_gap', 0.78)
         self.horizon_steps = rospy.get_param('~horizon_steps', 18)
@@ -36,7 +37,9 @@ class ComplexGameController(object):
         self.evasion_gain = rospy.get_param('~evasion_gain', 1.45)
         self.safe_distance = rospy.get_param('~safe_distance', 1.45)
         self.catchup_distance = rospy.get_param('~catchup_distance', 1.65)
-        self.catchup_gain = rospy.get_param('~catchup_gain', 1.45)
+        self.catchup_gain = rospy.get_param('~catchup_gain', 2.25)
+        self.initial_boost_duration = rospy.get_param('~initial_boost_duration', 4.0)
+        self.initial_boost_gain = rospy.get_param('~initial_boost_gain', 1.10)
         self.obstacle_influence = rospy.get_param('~obstacle_influence', 0.95)
         self.obstacle_gain = rospy.get_param('~obstacle_gain', 1.65)
         self.ripple_count = rospy.get_param('~ripple_count', 9)
@@ -44,8 +47,8 @@ class ComplexGameController(object):
 
         self.start_time = rospy.get_time()
         self.states = {
-            'pursuer_complex': {'pos': self.heart_reference(0.0)[0], 'vel': (0.0, 0.0)},
-            'evader_complex': {'pos': self.heart_reference(self.phase_gap)[0], 'vel': (0.0, 0.0)},
+            'pursuer_complex': {'pos': self.heart_reference(self.start_theta)[0], 'vel': (0.0, 0.0)},
+            'evader_complex': {'pos': self.heart_reference(self.start_theta + self.phase_gap)[0], 'vel': (0.0, 0.0)},
         }
 
     @staticmethod
@@ -229,7 +232,7 @@ class ComplexGameController(object):
 
     def game_controls(self):
         elapsed = rospy.get_time() - self.start_time
-        theta = 2.0 * math.pi * elapsed / self.period
+        theta = self.start_theta + 2.0 * math.pi * elapsed / self.period
         p_ref, p_ref_vel = self.heart_reference(theta)
         e_ref, e_ref_vel = self.heart_reference(theta + self.phase_gap)
 
@@ -248,7 +251,11 @@ class ComplexGameController(object):
         direction = (dx / distance, dy / distance)
         catchup_pressure = max(0.0, distance - self.catchup_distance) / self.catchup_distance
         catchup_pressure = min(1.0, catchup_pressure)
-        catchup = self.scale(direction, self.catchup_gain * catchup_pressure)
+        initial_boost = max(0.0, 1.0 - elapsed / self.initial_boost_duration)
+        catchup = self.scale(
+            direction,
+            self.catchup_gain * catchup_pressure + self.initial_boost_gain * initial_boost,
+        )
 
         p_control = self.saturate(
             self.add(self.add(self.add(p_control, p_bias), p_obstacle), catchup),
