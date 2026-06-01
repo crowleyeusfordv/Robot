@@ -21,13 +21,14 @@ class ComplexGameDriver(object):
     def __init__(self):
         self.rate_hz = rospy.get_param('~rate_hz', 70.0)
         self.mass = rospy.get_param('~mass', 1.0)
-        self.damping = rospy.get_param('~damping', 0.26)
-        self.max_speed = rospy.get_param('~max_speed', 2.35)
+        self.damping = rospy.get_param('~damping', 0.20)
+        self.pursuer_max_speed = rospy.get_param('~pursuer_max_speed', 3.65)
+        self.evader_max_speed = rospy.get_param('~evader_max_speed', 2.65)
         self.z_height = rospy.get_param('~z_height', 0.12)
 
         self.states = {
             'pursuer_complex': VehicleState(0.0, 1.65),
-            'evader_complex': VehicleState(1.22, 3.10),
+            'evader_complex': VehicleState(1.20, 3.18),
         }
 
         self.set_model_pub = rospy.Publisher('/gazebo/set_model_state', ModelState, queue_size=20)
@@ -56,20 +57,21 @@ class ComplexGameDriver(object):
         self.last_time = now
 
         for name, state in self.states.items():
-            self.integrate(state, dt)
+            self.integrate(name, state, dt)
             self.keep_inside_room(state)
             self.publish_model_state(name, state)
         self.publish_combined_state()
 
-    def integrate(self, state, dt):
+    def integrate(self, name, state, dt):
         if dt <= 0.0:
             return
         state.vx += (state.ax - self.damping * state.vx) * dt
         state.vy += (state.ay - self.damping * state.vy) * dt
 
         speed = math.hypot(state.vx, state.vy)
-        if speed > self.max_speed:
-            scale = self.max_speed / speed
+        max_speed = self.pursuer_max_speed if name == 'pursuer_complex' else self.evader_max_speed
+        if speed > max_speed:
+            scale = max_speed / speed
             state.vx *= scale
             state.vy *= scale
 

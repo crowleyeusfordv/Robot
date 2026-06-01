@@ -23,19 +23,24 @@ class ComplexGameController(object):
         rospy.Subscriber('/complex/model_states', ModelStates, self.state_callback)
 
         self.rate_hz = rospy.get_param('~rate_hz', 30.0)
-        self.period = rospy.get_param('~period', 38.0)
+        self.period = rospy.get_param('~period', 28.0)
         self.phase_gap = rospy.get_param('~phase_gap', 0.78)
         self.horizon_steps = rospy.get_param('~horizon_steps', 18)
         self.horizon_dt = rospy.get_param('~horizon_dt', 0.12)
 
-        self.max_accel = rospy.get_param('~max_accel', 4.4)
-        self.track_kp = rospy.get_param('~track_kp', 2.35)
-        self.track_kd = rospy.get_param('~track_kd', 1.55)
-        self.pursuit_gain = rospy.get_param('~pursuit_gain', 1.05)
+        self.pursuer_max_accel = rospy.get_param('~pursuer_max_accel', 7.2)
+        self.evader_max_accel = rospy.get_param('~evader_max_accel', 5.0)
+        self.track_kp = rospy.get_param('~track_kp', 3.15)
+        self.track_kd = rospy.get_param('~track_kd', 1.95)
+        self.pursuit_gain = rospy.get_param('~pursuit_gain', 1.85)
         self.evasion_gain = rospy.get_param('~evasion_gain', 1.45)
-        self.safe_distance = rospy.get_param('~safe_distance', 1.35)
+        self.safe_distance = rospy.get_param('~safe_distance', 1.45)
+        self.catchup_distance = rospy.get_param('~catchup_distance', 1.65)
+        self.catchup_gain = rospy.get_param('~catchup_gain', 1.45)
         self.obstacle_influence = rospy.get_param('~obstacle_influence', 0.95)
         self.obstacle_gain = rospy.get_param('~obstacle_gain', 1.65)
+        self.ripple_count = rospy.get_param('~ripple_count', 9)
+        self.ripple_amplitude = rospy.get_param('~ripple_amplitude', 0.13)
 
         self.start_time = rospy.get_time()
         self.states = {
@@ -43,7 +48,8 @@ class ComplexGameController(object):
             'evader_complex': {'pos': self.heart_reference(self.phase_gap)[0], 'vel': (0.0, 0.0)},
         }
 
-    def heart_reference(self, theta):
+    @staticmethod
+    def base_heart_point(theta):
         x = 16.0 * math.sin(theta) ** 3
         y = (
             13.0 * math.cos(theta)
@@ -51,17 +57,44 @@ class ComplexGameController(object):
             - 2.0 * math.cos(3.0 * theta)
             - math.cos(4.0 * theta)
         )
-        dx = 48.0 * math.sin(theta) ** 2 * math.cos(theta)
-        dy = (
-            -13.0 * math.sin(theta)
-            + 10.0 * math.sin(2.0 * theta)
-            + 6.0 * math.sin(3.0 * theta)
-            + 4.0 * math.sin(4.0 * theta)
-        )
-
         scale = 0.22
+        return scale * x, scale * y + 0.55
+
+    def rippled_heart_point(self, theta):
+        base = self.base_heart_point(theta)
+        delta = 0.001
+        ahead = self.base_heart_point(theta + delta)
+        behind = self.base_heart_point(theta - delta)
+        tangent = (ahead[0] - behind[0], ahead[1] - behind[1])
+        tangent_norm = math.hypot(tangent[0], tangent[1])
+        if tangent_norm < 1e-6:
+            return base
+
+        normal = (-tangent[1] / tangent_norm, tangent[0] / tangent_norm)
+        ripple = self.ripple_amplitude * math.sin(float(self.ripple_count) * theta)
+        return base[0] + ripple * normal[0], base[1] + ripple * normal[1]
+
+    def heart_reference(self, theta):
+        delta = 0.006
+        pos = self.rippled_heart_point(theta)
+        ahead = self.rippled_heart_point(theta + delta)
+        behind = self.rippled_heart_point(theta - delta)
         omega = 2.0 * math.pi / self.period
-        return (scale * x, scale * y + 0.55), (scale * dx * omega, scale * dy * omega)
+        vel = (
+            (ahead[0] - behind[0]) / (2.0 * delta) * omega,
+            (ahead[1] - behind[1]) / (2.0 * delta) * omega,
+        )
+        return pos, vel
+
+    def reference_turn_demand(self, theta):
+        delta = 0.015
+        before = self.rippled_heart_point(theta - delta)
+        current = self.rippled_heart_point(theta)
+        after = self.rippled_heart_point(theta + delta)
+        heading_1 = math.atan2(current[1] - before[1], current[0] - before[0])
+        heading_2 = math.atan2(after[1] - current[1], after[0] - current[0])
+        change = math.atan2(math.sin(heading_2 - heading_1), math.cos(heading_2 - heading_1))
+        return abs(change) / delta
 
     def state_callback(self, msg):
         for index, name in enumerate(msg.name):
@@ -106,11 +139,11 @@ class ComplexGameController(object):
 
         return (bias_x, bias_y), cost, closest_margin
 
-    def saturate(self, control):
+    def saturate(self, control, limit):
         norm = math.hypot(control[0], control[1])
-        if norm <= self.max_accel or norm == 0.0:
+        if norm <= limit or norm == 0.0:
             return control
-        scale = self.max_accel / norm
+        scale = limit / norm
         return control[0] * scale, control[1] * scale
 
     @staticmethod
@@ -164,13 +197,21 @@ class ComplexGameController(object):
             pursuer_bias = self.add(pursuer_bias, self.add(p_game, self.scale(p_obstacle, discount)))
             evader_bias = self.add(evader_bias, self.add(e_game, self.scale(e_obstacle, discount)))
 
-            p_pred = self.predict_step(p_pred, self.saturate(self.add(p_track, p_game)), self.horizon_dt)
-            e_pred = self.predict_step(e_pred, self.saturate(self.add(e_track, e_game)), self.horizon_dt)
+            p_pred = self.predict_step(
+                p_pred,
+                self.saturate(self.add(p_track, p_game), self.pursuer_max_accel),
+                self.horizon_dt,
+            )
+            e_pred = self.predict_step(
+                e_pred,
+                self.saturate(self.add(e_track, e_game), self.evader_max_accel),
+                self.horizon_dt,
+            )
 
         normalizer = 1.0 / float(max(self.horizon_steps, 1))
         return self.scale(pursuer_bias, normalizer), self.scale(evader_bias, normalizer)
 
-    def compute_costs(self, pursuer, evader, p_ref, e_ref, p_control, e_control):
+    def compute_costs(self, theta, pursuer, evader, p_ref, e_ref, p_control, e_control):
         dx = evader['pos'][0] - pursuer['pos'][0]
         dy = evader['pos'][1] - pursuer['pos'][1]
         distance = max(math.hypot(dx, dy), 0.001)
@@ -184,7 +225,7 @@ class ComplexGameController(object):
 
         pursuer_cost = 4.0 * p_track + 0.75 * distance * distance + 0.06 * p_effort + p_obstacle_cost
         evader_cost = 4.0 * e_track + 1.6 / (distance * distance + 0.08) + 0.06 * e_effort + e_obstacle_cost
-        return pursuer_cost, evader_cost, distance, min(p_margin, e_margin)
+        return pursuer_cost, evader_cost, distance, min(p_margin, e_margin), self.reference_turn_demand(theta)
 
     def game_controls(self):
         elapsed = rospy.get_time() - self.start_time
@@ -201,10 +242,24 @@ class ComplexGameController(object):
         p_obstacle, _, _ = self.obstacle_barrier(pursuer['pos'])
         e_obstacle, _, _ = self.obstacle_barrier(evader['pos'])
 
-        p_control = self.saturate(self.add(self.add(p_control, p_bias), p_obstacle))
-        e_control = self.saturate(self.add(self.add(e_control, e_bias), e_obstacle))
+        dx = evader['pos'][0] - pursuer['pos'][0]
+        dy = evader['pos'][1] - pursuer['pos'][1]
+        distance = max(math.hypot(dx, dy), 0.001)
+        direction = (dx / distance, dy / distance)
+        catchup_pressure = max(0.0, distance - self.catchup_distance) / self.catchup_distance
+        catchup_pressure = min(1.0, catchup_pressure)
+        catchup = self.scale(direction, self.catchup_gain * catchup_pressure)
 
-        metrics = self.compute_costs(pursuer, evader, p_ref, e_ref, p_control, e_control)
+        p_control = self.saturate(
+            self.add(self.add(self.add(p_control, p_bias), p_obstacle), catchup),
+            self.pursuer_max_accel,
+        )
+        e_control = self.saturate(
+            self.add(self.add(e_control, e_bias), e_obstacle),
+            self.evader_max_accel,
+        )
+
+        metrics = self.compute_costs(theta, pursuer, evader, p_ref, e_ref, p_control, e_control)
         return p_control, e_control, metrics
 
     @staticmethod
@@ -215,7 +270,7 @@ class ComplexGameController(object):
         return msg
 
     def publish_metrics(self, metrics, p_control, e_control):
-        pursuer_cost, evader_cost, distance, closest_margin = metrics
+        pursuer_cost, evader_cost, distance, closest_margin, turn_demand = metrics
         msg = Float64MultiArray()
         msg.data = [
             distance,
@@ -224,6 +279,7 @@ class ComplexGameController(object):
             math.hypot(p_control[0], p_control[1]),
             math.hypot(e_control[0], e_control[1]),
             closest_margin,
+            turn_demand,
         ]
         self.metrics_pub.publish(msg)
 
