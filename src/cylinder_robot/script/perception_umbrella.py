@@ -5,10 +5,49 @@ import math
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
+import numpy as np
 import rospkg
 import rospy
 from gazebo_msgs.msg import ModelStates
 from std_msgs.msg import Float64MultiArray
+
+
+class KalmanFilter2D(object):
+    def __init__(self, initial_x, initial_y, measurement_std, process_var):
+        self.x = np.array([[initial_x], [initial_y], [0.0], [0.0]])
+        self.P = np.eye(4) * 0.4
+        self.H = np.array([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ])
+        self.R = np.eye(2) * measurement_std * measurement_std
+        self.process_var = process_var
+
+    def predict(self, dt):
+        F = np.array([
+            [1.0, 0.0, dt, 0.0],
+            [0.0, 1.0, 0.0, dt],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ])
+        q = self.process_var
+        Q = q * np.array([
+            [dt ** 4 / 4.0, 0.0, dt ** 3 / 2.0, 0.0],
+            [0.0, dt ** 4 / 4.0, 0.0, dt ** 3 / 2.0],
+            [dt ** 3 / 2.0, 0.0, dt ** 2, 0.0],
+            [0.0, dt ** 3 / 2.0, 0.0, dt ** 2],
+        ])
+        self.x = F.dot(self.x)
+        self.P = F.dot(self.P).dot(F.T) + Q
+
+    def correct(self, measured_x, measured_y):
+        z = np.array([[measured_x], [measured_y]])
+        innovation = z - self.H.dot(self.x)
+        S = self.H.dot(self.P).dot(self.H.T) + self.R
+        K = self.P.dot(self.H.T).dot(np.linalg.inv(S))
+        self.x = self.x + K.dot(innovation)
+        self.P = (np.eye(4) - K.dot(self.H)).dot(self.P)
+        return self.x[0, 0], self.x[1, 0]
 
 
 class UmbrellaGameRecorder(object):
@@ -25,6 +64,17 @@ class UmbrellaGameRecorder(object):
             'evader_x': [],
             'evader_y': [],
         }
+        self.filter_samples = {
+            'time': [],
+            'pursuer_noisy_x': [],
+            'pursuer_noisy_y': [],
+            'pursuer_filter_x': [],
+            'pursuer_filter_y': [],
+            'evader_noisy_x': [],
+            'evader_noisy_y': [],
+            'evader_filter_x': [],
+            'evader_filter_y': [],
+        }
         self.metrics = {
             'time': [],
             'distance': [],
@@ -34,6 +84,11 @@ class UmbrellaGameRecorder(object):
             'evader_u': [],
             'turn_demand': [],
         }
+        self.measurement_std = rospy.get_param('~measurement_std', 0.14)
+        self.process_var = rospy.get_param('~filter_process_var', 0.18)
+        self.filters = {}
+        self.last_filter_time = None
+        np.random.seed(7)
         rospy.Subscriber('/umbrella/model_states', ModelStates, self.state_callback)
         rospy.Subscriber('/umbrella/game_metrics', Float64MultiArray, self.metrics_callback)
         rospy.on_shutdown(self.visualization)
@@ -67,6 +122,43 @@ class UmbrellaGameRecorder(object):
         self.samples['pursuer_y'].append(pursuer.y)
         self.samples['evader_x'].append(evader.x)
         self.samples['evader_y'].append(evader.y)
+        self.update_filters(elapsed, pursuer, evader)
+
+    def update_filters(self, elapsed, pursuer, evader):
+        if self.last_filter_time is None:
+            dt = 0.0
+        else:
+            dt = max(0.0, min(elapsed - self.last_filter_time, 0.20))
+        self.last_filter_time = elapsed
+
+        p_noisy = self.noisy_measurement(pursuer.x, pursuer.y)
+        e_noisy = self.noisy_measurement(evader.x, evader.y)
+
+        if not self.filters:
+            self.filters['pursuer'] = KalmanFilter2D(p_noisy[0], p_noisy[1], self.measurement_std, self.process_var)
+            self.filters['evader'] = KalmanFilter2D(e_noisy[0], e_noisy[1], self.measurement_std, self.process_var)
+        else:
+            self.filters['pursuer'].predict(dt)
+            self.filters['evader'].predict(dt)
+
+        p_filtered = self.filters['pursuer'].correct(p_noisy[0], p_noisy[1])
+        e_filtered = self.filters['evader'].correct(e_noisy[0], e_noisy[1])
+
+        self.filter_samples['time'].append(elapsed)
+        self.filter_samples['pursuer_noisy_x'].append(p_noisy[0])
+        self.filter_samples['pursuer_noisy_y'].append(p_noisy[1])
+        self.filter_samples['pursuer_filter_x'].append(p_filtered[0])
+        self.filter_samples['pursuer_filter_y'].append(p_filtered[1])
+        self.filter_samples['evader_noisy_x'].append(e_noisy[0])
+        self.filter_samples['evader_noisy_y'].append(e_noisy[1])
+        self.filter_samples['evader_filter_x'].append(e_filtered[0])
+        self.filter_samples['evader_filter_y'].append(e_filtered[1])
+
+    def noisy_measurement(self, x, y):
+        return (
+            x + np.random.normal(0.0, self.measurement_std),
+            y + np.random.normal(0.0, self.measurement_std),
+        )
 
     def metrics_callback(self, msg):
         if len(msg.data) < 6:
@@ -137,6 +229,64 @@ class UmbrellaGameRecorder(object):
         fig.savefig(fig_path, dpi=130)
         plt.close(fig)
         rospy.loginfo('Saved umbrella pursuit-evasion plot to %s', fig_path)
+        self.filter_visualization()
+
+    def filter_visualization(self):
+        if len(self.filter_samples['time']) < 2:
+            rospy.logwarn('Not enough filter samples to save fig_filter_umbrella.png')
+            return
+
+        fig = plt.figure(figsize=(16, 8))
+        ax_pursuer = fig.add_subplot(1, 2, 1)
+        ax_evader = fig.add_subplot(1, 2, 2)
+
+        ax_pursuer.plot(self.samples['pursuer_x'], self.samples['pursuer_y'], label='true')
+        ax_pursuer.scatter(
+            self.filter_samples['pursuer_noisy_x'],
+            self.filter_samples['pursuer_noisy_y'],
+            s=8,
+            alpha=0.25,
+            label='noisy observation',
+        )
+        ax_pursuer.plot(
+            self.filter_samples['pursuer_filter_x'],
+            self.filter_samples['pursuer_filter_y'],
+            linewidth=2.0,
+            label='Kalman estimate',
+        )
+        ax_pursuer.set_title('pursuer Kalman filtering effect')
+        ax_pursuer.set_xlabel('x')
+        ax_pursuer.set_ylabel('y')
+        ax_pursuer.set_aspect('equal', adjustable='box')
+        ax_pursuer.grid(True)
+        ax_pursuer.legend(loc='best')
+
+        ax_evader.plot(self.samples['evader_x'], self.samples['evader_y'], label='true')
+        ax_evader.scatter(
+            self.filter_samples['evader_noisy_x'],
+            self.filter_samples['evader_noisy_y'],
+            s=8,
+            alpha=0.25,
+            label='noisy observation',
+        )
+        ax_evader.plot(
+            self.filter_samples['evader_filter_x'],
+            self.filter_samples['evader_filter_y'],
+            linewidth=2.0,
+            label='Kalman estimate',
+        )
+        ax_evader.set_title('evader Kalman filtering effect')
+        ax_evader.set_xlabel('x')
+        ax_evader.set_ylabel('y')
+        ax_evader.set_aspect('equal', adjustable='box')
+        ax_evader.grid(True)
+        ax_evader.legend(loc='best')
+
+        fig.tight_layout()
+        fig_path = rospkg.RosPack().get_path('cylinder_robot') + '/fig_filter_umbrella.png'
+        fig.savefig(fig_path, dpi=130)
+        plt.close(fig)
+        rospy.loginfo('Saved Kalman filtering plot to %s', fig_path)
 
 
 if __name__ == '__main__':
