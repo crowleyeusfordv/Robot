@@ -1,0 +1,14 @@
+<launch>
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(find cylinder_robot)/worlds/complex.world"/>
+    <arg name="paused" value="false"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="gui" value="true"/>
+    <arg name="recording" value="false"/>
+    <arg name="debug" value="false"/>
+  </include>
+
+  <node pkg="cylinder_robot" name="driver_complex" type="driver_complex.py" output="screen" respawn="false"/>
+  <node pkg="cylinder_robot" name="controller_complex" type="controller_complex.py" output="screen" respawn="false"/>
+  <node pkg="cylinder_robot" name="perception_complex" type="perception_complex.py" output="screen" respawn="false"/>
+</launch>

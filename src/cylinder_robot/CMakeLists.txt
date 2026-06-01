@@ -13,7 +13,10 @@ catkin_package()
 # 这里的路径对应你 script 文件夹里的文件名
 catkin_install_python(PROGRAMS
   script/controller.py
+  script/controller_complex.py
   script/driver.py
+  script/driver_complex.py
   script/perception.py
+  script/perception_complex.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
